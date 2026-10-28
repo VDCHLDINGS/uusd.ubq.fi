@@ -6,7 +6,7 @@ import type { PriceService } from "../services/price-service.ts";
 import type { NotificationManager } from "./notification-manager.ts";
 import type { CentralizedRefreshService, RefreshData } from "../services/centralized-refresh-service.ts";
 import type { TokenBalance, InventoryBarState } from "../types/inventory.types.ts";
-import { formatTokenAmount, formatUsdValue, calculateTotalUsdValue, isBalanceZero } from "../utils/token-utils.ts";
+import { formatTokenAmount, formatUsdValue, calculateTotalUsdValue, isBalanceZero, areAddressesEqual } from "../utils/token-utils.ts";
 import { batchFetchTokenBalances } from "../utils/batch-request-utils.ts";
 
 import icons from "./icons.ts";
@@ -112,7 +112,7 @@ export class InventoryBarComponent {
 
       // Update each token balance individually
       data.tokenBalances.forEach((newBalance) => {
-        const existingIndex = updatedBalances.findIndex((existing) => existing.symbol === newBalance.symbol);
+        const existingIndex = updatedBalances.findIndex((existing) => areAddressesEqual(existing.address, newBalance.address));
 
         if (existingIndex >= 0) {
           // ONLY update if we have valid data - NO FALLBACKS
@@ -285,8 +285,18 @@ export class InventoryBarComponent {
 
       const balances = await Promise.all(balancePromises);
 
-      this._state.balances = balances;
-      this._state.totalUsdValue = calculateTotalUsdValue(balances);
+      // Merge core-token refresh results by address so non-core wallet holdings are preserved
+      const mergedBalances = [...this._state.balances];
+      for (const refreshed of balances) {
+        const idx = mergedBalances.findIndex((existing) => areAddressesEqual(existing.address, refreshed.address));
+        if (idx >= 0) {
+          mergedBalances[idx] = refreshed;
+        } else {
+          mergedBalances.push(refreshed);
+        }
+      }
+      this._state.balances = mergedBalances;
+      this._state.totalUsdValue = calculateTotalUsdValue(mergedBalances);
       this._state.isLoading = false;
 
       this._renderBalances();

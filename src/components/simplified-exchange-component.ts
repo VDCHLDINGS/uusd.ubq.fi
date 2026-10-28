@@ -160,14 +160,34 @@ export class SimplifiedExchangeComponent {
     if (!selectEl) {
       return;
     }
+    const previousSelection = (selectEl.value || this._state.selectedTokenAddress) as Address | undefined;
     const yourTokenGroup = document.getElementById("yourTokenGroup") as HTMLOptGroupElement;
     const otherTokenGroup = document.getElementById("otherTokenGroup") as HTMLOptGroupElement;
 
+    // Combine address-keyed inventory cache with latest centralized refresh balances
+    const inventoryBalances = this._services.inventoryBar.getBalances();
+    const combinedByAddress = new Map<string, { address: Address; decimals: number; symbol: string; balance?: bigint }>();
+    for (const b of inventoryBalances) {
+      if (b.balance === undefined || b.balance > 0n) {
+        combinedByAddress.set(b.address.toLowerCase(), b);
+      }
+    }
     if (refreshData?.tokenBalances) {
+      for (const b of refreshData.tokenBalances) {
+        if (b.balance === undefined || b.balance > 0n) {
+          combinedByAddress.set(b.address.toLowerCase(), b);
+        } else {
+          combinedByAddress.delete(b.address.toLowerCase());
+        }
+      }
+    }
+    const activeTokenBalances = combinedByAddress.size > 0 ? Array.from(combinedByAddress.values()) : refreshData?.tokenBalances;
+
+    if (activeTokenBalances) {
       yourTokenGroup.style.display = "";
       otherTokenGroup.style.display = "";
       if (
-        refreshData.tokenBalances.some((balance) => areAddressesEqual(balance.address, INVENTORY_TOKENS.LUSD.address)) &&
+        activeTokenBalances.some((balance) => areAddressesEqual(balance.address, INVENTORY_TOKENS.LUSD.address)) &&
         !yourTokenGroup.querySelector(`option[value="${INVENTORY_TOKENS.LUSD.address}"i]`)
       ) {
         // Ensure LUSD is always in the first position
@@ -178,7 +198,7 @@ export class SimplifiedExchangeComponent {
         option.text = INVENTORY_TOKENS.LUSD.symbol.substring(0, 10);
         yourTokenGroup.insertBefore(option, yourTokenGroup.firstChild);
       }
-      refreshData.tokenBalances.forEach((balance) => {
+      activeTokenBalances.forEach((balance) => {
         if (yourTokenGroup.querySelector(`option[value="${balance.address}"i]`)) {
           return; // Token already exists
         }
@@ -193,7 +213,7 @@ export class SimplifiedExchangeComponent {
       });
       // Remove old user's tokens
       yourTokenGroup.querySelectorAll("option").forEach((opt) => {
-        if (!refreshData.tokenBalances?.some((balance) => areAddressesEqual(balance.address, opt.value as Address))) {
+        if (!activeTokenBalances?.some((balance) => areAddressesEqual(balance.address, opt.value as Address))) {
           opt.remove();
         }
       });
@@ -230,6 +250,10 @@ export class SimplifiedExchangeComponent {
         opt.remove();
       }
     });
+
+    if (previousSelection && [...selectEl.options].some((opt) => areAddressesEqual(opt.value as Address, previousSelection))) {
+      selectEl.value = previousSelection;
+    }
   }
 
   /**
@@ -618,13 +642,7 @@ export class SimplifiedExchangeComponent {
       }
     }
 
-    // Update input label
-    const amountLabel = document.getElementById("amountLabel");
     const amountInput = document.getElementById("exchangeAmount") as HTMLInputElement;
-
-    if (amountLabel) {
-      amountLabel.textContent = this._state.direction === "deposit" ? "LUSD" : "UUSD";
-    }
 
     if (amountInput) {
       if (isBalancesLoading) {
@@ -636,8 +654,15 @@ export class SimplifiedExchangeComponent {
       }
     }
 
-    // Show/hide options based on protocol state and direction
+    // Restore token options and selection before computing the amount label
     this._renderTokenOptions();
+
+    const amountLabel = document.getElementById("amountLabel");
+    if (amountLabel) {
+      const activeDepositSymbol = this._getSelectedToken()?.symbol || "LUSD";
+      amountLabel.textContent = this._state.direction === "deposit" ? activeDepositSymbol : "UUSD";
+    }
+
     this._renderOptions();
     this._renderOutput();
   }
